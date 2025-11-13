@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dmitryikh/leaves/internal/pickle"
-	"github.com/dmitryikh/leaves/transformation"
+	"github.com/ezoic/leaves/internal/pickle"
+	"github.com/ezoic/leaves/transformation"
 )
 
 func lgTreeFromSklearnDecisionTreeRegressor(tree pickle.SklearnDecisionTreeRegressor, scale float64, base float64) (lgTree, error) {

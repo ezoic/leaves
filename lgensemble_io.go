@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmitryikh/leaves/transformation"
-	"github.com/dmitryikh/leaves/util"
+	"github.com/ezoic/leaves/transformation"
+	"github.com/ezoic/leaves/util"
 )
 
 type lgEnsembleJSON struct {
@@ -300,7 +300,9 @@ func LGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensem
 
 	if err := params.Compare("version", "v2"); err != nil {
 		if err := params.Compare("version", "v3"); err != nil {
-			return nil, err
+			if err := params.Compare("version", "v4"); err != nil {
+				return nil, err
+			}
 		}
 	}
 	nClasses, err := params.ToInt("num_class")
