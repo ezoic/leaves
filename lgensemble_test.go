@@ -380,3 +380,88 @@ func TestLGEnsembleJSON1tree(t *testing.T) {
 	check([]float64{0.15, 0.0}, 1.1111)
 	check([]float64{0.15, 11.0}, 1.1111)
 }
+
+func TestLeafCounts(t *testing.T) {
+	path := filepath.Join("testdata", "model_simple.txt")
+	model, err := LGEnsembleFromFile(path, false)
+	if err != nil {
+		t.Fatalf("Failed to load model: %v", err)
+	}
+
+	leafCounts := model.LeafCounts()
+	if leafCounts == nil {
+		t.Fatal("LeafCounts returned nil")
+	}
+	// model_simple.txt has 2 trees
+	if len(leafCounts) != 2 {
+		t.Fatalf("Expected 2 trees, got %d", len(leafCounts))
+	}
+	// Both trees have leaf_count=200 341 459
+	expected := []int64{200, 341, 459}
+	for treeIdx, treeCounts := range leafCounts {
+		if len(treeCounts) != len(expected) {
+			t.Fatalf("Tree %d: expected %d leaf counts, got %d", treeIdx, len(expected), len(treeCounts))
+		}
+		for i, exp := range expected {
+			if treeCounts[i] != exp {
+				t.Errorf("Tree %d, Leaf %d: expected %d, got %d", treeIdx, i, exp, treeCounts[i])
+			}
+		}
+	}
+}
+
+func TestLeafCountsTree2Leaves(t *testing.T) {
+	path := filepath.Join("testdata", "tree_2leaves.txt")
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bufReader := bufio.NewReader(reader)
+
+	tree, err := lgTreeFromReader(bufReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// tree_2leaves.txt has leaf_count=300 700
+	expected := []int64{300, 700}
+	if len(tree.leafCounts) != len(expected) {
+		t.Fatalf("Expected %d leaf counts, got %d", len(expected), len(tree.leafCounts))
+	}
+	for i, exp := range expected {
+		if tree.leafCounts[i] != exp {
+			t.Errorf("Leaf %d: expected %d, got %d", i, exp, tree.leafCounts[i])
+		}
+	}
+}
+
+func TestLeafCountsJSON(t *testing.T) {
+	modelPath := filepath.Join("testdata", "lg_1tree.json")
+	modelFile, err := os.Open(modelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer modelFile.Close()
+
+	model, err := LGEnsembleFromJSON(modelFile, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	leafCounts := model.LeafCounts()
+	if leafCounts == nil {
+		t.Fatal("LeafCounts returned nil")
+	}
+	if len(leafCounts) != 1 {
+		t.Fatalf("Expected 1 tree, got %d", len(leafCounts))
+	}
+	// lg_1tree.json has 3 leaves, each with leaf_count=38
+	if len(leafCounts[0]) != 3 {
+		t.Fatalf("Expected 3 leaf counts, got %d", len(leafCounts[0]))
+	}
+	for i, count := range leafCounts[0] {
+		if count != 38 {
+			t.Errorf("Leaf %d: expected count 38, got %d", i, count)
+		}
+	}
+}

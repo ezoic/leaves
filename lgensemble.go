@@ -43,6 +43,18 @@ func (e *lgEnsemble) NLeaves() []int {
 	return nleaves
 }
 
+// LeafCounts returns the training sample counts for each leaf in each tree.
+// Returns a slice of length len(Trees), where each inner slice contains the
+// sample counts for that tree's leaves. Returns nil slices for trees without
+// leaf count data (e.g., if the model file didn't include leaf_count).
+func (e *lgEnsemble) LeafCounts() [][]int64 {
+	result := make([][]int64, len(e.Trees))
+	for i := range e.Trees {
+		result[i] = e.Trees[i].leafCounts
+	}
+	return result
+}
+
 func (e *lgEnsemble) Name() string {
 	return e.name
 }

@@ -154,6 +154,26 @@ func (p *stringParams) ToInt32Slice(key string) ([]int32, error) {
 	return values, nil
 }
 
+func (p *stringParams) ToInt64Slice(key string) ([]int64, error) {
+	valueStr, isFound := (*p)[key]
+	if !isFound {
+		return nil, fmt.Errorf("no %s field", key)
+	}
+	if valueStr == "" {
+		return nil, nil // Empty value is valid - return nil slice
+	}
+	valuesStr := strings.Split(valueStr, " ")
+	values := make([]int64, 0, len(valuesStr))
+	for _, vStr := range valuesStr {
+		value, err := strconv.ParseInt(vStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("can't convert %s: %s", key, err.Error())
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
 func (p *stringParams) Contains(key string) bool {
 	_, isFound := (*p)[key]
 	return isFound

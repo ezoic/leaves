@@ -127,6 +127,15 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 	}
 	t.leafValues = leafValues
 
+	// Parse leaf_count (optional - don't fail if missing)
+	if params.Contains("leaf_count") {
+		leafCounts, err := params.ToInt64Slice("leaf_count")
+		if err != nil {
+			return t, err
+		}
+		t.leafCounts = leafCounts
+	}
+
 	if numLeaves == 1 {
 		// special case - constant value tree
 		return t, nil
@@ -403,8 +412,14 @@ func LGEnsembleFromFile(filename string, loadTransformation bool) (*Ensemble, er
 	return LGEnsembleFromReader(bufReader, loadTransformation)
 }
 
+// lgLeafJSON represents a leaf node with value and optional count
+type lgLeafJSON struct {
+	Value float64
+	Count int64
+}
+
 // unmarshalNode recuirsively unmarshal nodes data in the tree from JSON raw data. Tree's node can be:
-// 1. leaf node (contains field 'field_value')
+// 1. leaf node (contains field 'leaf_value' and optionally 'leaf_count')
 // 2. node with decision rule (contains field from `lgNodeJSON` structure)
 func unmarshalNode(raw []byte) (interface{}, error) {
 	node := &lgNodeJSON{}
@@ -425,7 +440,12 @@ func unmarshalNode(raw []byte) (interface{}, error) {
 		if !ok {
 			return nil, fmt.Errorf("unknown tree")
 		}
-		return value, nil
+		// Extract leaf_count if present
+		leaf := lgLeafJSON{Value: value}
+		if count, ok := data["leaf_count"].(float64); ok {
+			leaf.Count = int64(count)
+		}
+		return leaf, nil
 	}
 	node.LeftChild, err = unmarshalNode(node.LeftChildRaw)
 	if err != nil {
@@ -459,14 +479,18 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 	}
 	numNodes := treeJSON.NumLeaves - 1
 
+	// Pre-allocate leaf counts slice if we have leaves
+	t.leafCounts = make([]int64, 0, treeJSON.NumLeaves)
+
 	treeJSON.Root, err = unmarshalNode(treeJSON.RootRaw)
 	if err != nil {
 		return t, err
 	}
 
-	if value, ok := treeJSON.Root.(float64); ok {
+	if leaf, ok := treeJSON.Root.(lgLeafJSON); ok {
 		// special case - constant value tree
-		t.leafValues = append(t.leafValues, value)
+		t.leafValues = append(t.leafValues, leaf.Value)
+		t.leafCounts = append(t.leafCounts, leaf.Count)
 		return t, nil
 	}
 
@@ -485,15 +509,17 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 			return node, fmt.Errorf("unexpected Threshold type %T", nodeJSON.Threshold)
 		}
 		node = numericalNode(nodeJSON.SplitFeature, missingType, threshold, defaultType)
-		if value, ok := nodeJSON.LeftChild.(float64); ok {
+		if leaf, ok := nodeJSON.LeftChild.(lgLeafJSON); ok {
 			node.Flags |= leftLeaf
 			node.Left = uint32(len(t.leafValues))
-			t.leafValues = append(t.leafValues, value)
+			t.leafValues = append(t.leafValues, leaf.Value)
+			t.leafCounts = append(t.leafCounts, leaf.Count)
 		}
-		if value, ok := nodeJSON.RightChild.(float64); ok {
+		if leaf, ok := nodeJSON.RightChild.(lgLeafJSON); ok {
 			node.Flags |= rightLeaf
 			node.Right = uint32(len(t.leafValues))
-			t.leafValues = append(t.leafValues, value)
+			t.leafValues = append(t.leafValues, leaf.Value)
+			t.leafCounts = append(t.leafCounts, leaf.Count)
 		}
 		return node, nil
 	}
@@ -546,15 +572,17 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 		}
 
 		node = categoricalNode(nodeJSON.SplitFeature, missingType, catIdx, catType)
-		if value, ok := nodeJSON.LeftChild.(float64); ok {
+		if leaf, ok := nodeJSON.LeftChild.(lgLeafJSON); ok {
 			node.Flags |= leftLeaf
 			node.Left = uint32(len(t.leafValues))
-			t.leafValues = append(t.leafValues, value)
+			t.leafValues = append(t.leafValues, leaf.Value)
+			t.leafCounts = append(t.leafCounts, leaf.Count)
 		}
-		if value, ok := nodeJSON.RightChild.(float64); ok {
+		if leaf, ok := nodeJSON.RightChild.(lgLeafJSON); ok {
 			node.Flags |= rightLeaf
 			node.Right = uint32(len(t.leafValues))
-			t.leafValues = append(t.leafValues, value)
+			t.leafValues = append(t.leafValues, leaf.Value)
+			t.leafCounts = append(t.leafCounts, leaf.Count)
 		}
 		return node, nil
 	}
@@ -596,7 +624,7 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 		if node.Flags&leftLeaf == 0 {
 			if left, ok := stackData.nodeJSON.LeftChild.(*lgNodeJSON); ok {
 				stack = append(stack, StackData{&t.nodes[len(t.nodes)-1].Left, left})
-			} else if _, ok := stackData.nodeJSON.LeftChild.(float64); ok {
+			} else if _, ok := stackData.nodeJSON.LeftChild.(lgLeafJSON); ok {
 			} else {
 				return t, fmt.Errorf("unexpected left child type %T", stackData.nodeJSON.LeftChild)
 			}
@@ -604,7 +632,7 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 		if node.Flags&rightLeaf == 0 {
 			if right, ok := stackData.nodeJSON.RightChild.(*lgNodeJSON); ok {
 				stack = append(stack, StackData{&t.nodes[len(t.nodes)-1].Right, right})
-			} else if _, ok := stackData.nodeJSON.RightChild.(float64); ok {
+			} else if _, ok := stackData.nodeJSON.RightChild.(lgLeafJSON); ok {
 			} else {
 				return t, fmt.Errorf("unexpected right child type %T", stackData.nodeJSON.RightChild)
 			}

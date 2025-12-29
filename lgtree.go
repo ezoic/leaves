@@ -30,6 +30,7 @@ type lgNode struct {
 type lgTree struct {
 	nodes         []lgNode
 	leafValues    []float64
+	leafCounts    []int64
 	catBoundaries []uint32
 	catThresholds []uint32
 	nCategorical  uint32

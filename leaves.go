@@ -283,6 +283,18 @@ func (e *Ensemble) NLeaves() []int {
 	return e.ensembleBaseInterface.NLeaves()
 }
 
+// LeafCounts returns the training sample counts for each leaf in each tree.
+// Returns a slice of length len(Trees), where each inner slice contains the
+// sample counts for that tree's leaves. Returns nil if the underlying ensemble
+// type doesn't support leaf counts, or nil inner slices for trees without
+// leaf count data (e.g., if the model file didn't include leaf_count).
+func (e *Ensemble) LeafCounts() [][]int64 {
+	if lc, ok := e.ensembleBaseInterface.(interface{ LeafCounts() [][]int64 }); ok {
+		return lc.LeafCounts()
+	}
+	return nil
+}
+
 // Name returns name of the estimator
 func (e *Ensemble) Name() string {
 	return e.ensembleBaseInterface.Name()
