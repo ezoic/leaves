@@ -69,6 +69,21 @@ func (e *xgEnsemble) predictInner(fvals []float64, nEstimators int, predictions 
 	}
 }
 
+func (e *xgEnsemble) predictWithLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64, startIndex int) {
+	for k := 0; k < e.nRawOutputGroups; k++ {
+		predictions[startIndex+k] = e.BaseScore
+	}
+
+	for i := 0; i < nEstimators; i++ {
+		for k := 0; k < e.nRawOutputGroups; k++ {
+			ID := i*e.nRawOutputGroups + k
+			pred, idx := e.Trees[ID].predict(fvals)
+			predictions[startIndex+k] += pred * e.WeightDrop[ID]
+			leafIndices[k*nEstimators+i] = float64(idx)
+		}
+	}
+}
+
 func (e *xgEnsemble) predictLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, startIndex int) {
 	nResults := e.nRawOutputGroups * nEstimators
 	for k := 0; k < nResults; k++ {

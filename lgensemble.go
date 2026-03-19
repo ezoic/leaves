@@ -77,6 +77,26 @@ func (e *lgEnsemble) predictInner(fvals []float64, nEstimators int, predictions 
 	}
 }
 
+func (e *lgEnsemble) predictWithLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64, startIndex int) {
+	for k := 0; k < e.nRawOutputGroups; k++ {
+		predictions[startIndex+k] = 0.0
+	}
+
+	coef := 1.0
+	if e.averageOutput {
+		coef = 1.0 / float64(nEstimators)
+	}
+
+	for i := 0; i < nEstimators; i++ {
+		for k := 0; k < e.nRawOutputGroups; k++ {
+			treeIdx := i*e.nRawOutputGroups + k
+			pred, idx := e.Trees[treeIdx].predict(fvals)
+			predictions[startIndex+k] += pred * coef
+			leafIndices[k*nEstimators+i] = float64(idx)
+		}
+	}
+}
+
 func (e *lgEnsemble) predictLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, startIndex int) {
 	nResults := e.nRawOutputGroups * nEstimators
 	for k := 0; k < nResults; k++ {

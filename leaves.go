@@ -21,6 +21,7 @@ type ensembleBaseInterface interface {
 	adjustNEstimators(nEstimators int) int
 	predictInner(fvals []float64, nEstimators int, predictions []float64, startIndex int)
 	predictLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, startIndex int)
+	predictWithLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64, startIndex int)
 	resetFVals(fvals []float64)
 }
 
@@ -92,6 +93,37 @@ func (e *Ensemble) Predict(fvals []float64, nEstimators int, predictions []float
 	}
 
 	e.predictInnerAndTransform(fvals, nEstimators, predictions, 0)
+	return nil
+}
+
+// PredictWithLeafIndices calculates predictions and leaf indices in a single
+// pass through the trees, avoiding the double traversal of calling Predict and
+// EnsembleWithLeafPredictions().Predict separately. `predictions` receives the
+// transformed output (e.g. after logistic sigmoid), `leafIndices` receives raw
+// leaf indices (size NRawOutputGroups * NEstimators).
+func (e *Ensemble) PredictWithLeafIndices(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64) error {
+	if len(predictions) < e.NOutputGroups() {
+		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NOutputGroups())
+	}
+	nLeafIndices := e.NRawOutputGroups() * e.NEstimators()
+	if nEstimators > 0 {
+		nLeafIndices = e.NRawOutputGroups() * nEstimators
+	}
+	if len(leafIndices) < nLeafIndices {
+		return fmt.Errorf("leafIndices slice too short (should be at least %d)", nLeafIndices)
+	}
+	if e.NFeatures() > len(fvals) {
+		return fmt.Errorf("incorrect number of features (%d)", len(fvals))
+	}
+	nEstimators = e.adjustNEstimators(nEstimators)
+
+	if e.Transformation().Type() == transformation.Raw {
+		e.predictWithLeafIndicesInner(fvals, nEstimators, predictions, leafIndices, 0)
+	} else {
+		rawPredictions := make([]float64, e.NRawOutputGroups())
+		e.predictWithLeafIndicesInner(fvals, nEstimators, rawPredictions, leafIndices, 0)
+		e.transform.Transform(rawPredictions, predictions, 0)
+	}
 	return nil
 }
 

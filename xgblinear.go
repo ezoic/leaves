@@ -42,6 +42,13 @@ func (e *xgLinear) predictInner(fvals []float64, nIterations int, predictions []
 	}
 }
 
+func (e *xgLinear) predictWithLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64, startIndex int) {
+	e.predictInner(fvals, nEstimators, predictions, startIndex)
+	for i := range leafIndices {
+		leafIndices[i] = 0
+	}
+}
+
 func (e *xgLinear) predictLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, startIndex int) {
 	// TODO: may be we should return an error here
 }

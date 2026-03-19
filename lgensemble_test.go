@@ -435,6 +435,107 @@ func TestLeafCountsTree2Leaves(t *testing.T) {
 	}
 }
 
+func TestPredictWithLeafIndicesRaw(t *testing.T) {
+	path := filepath.Join("testdata", "model_simple.txt")
+	model, err := LGEnsembleFromFile(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nEstimators := model.NEstimators()
+	nLeafIndices := model.NRawOutputGroups() * nEstimators
+
+	testCases := [][]float64{
+		{0.0, 0.0},
+		{1000.0, 0.0},
+		{800.0, 100.0},
+		{0.0, 100.0},
+	}
+
+	for i, fvals := range testCases {
+		predSep := make([]float64, 1)
+		err := model.Predict(fvals, nEstimators, predSep)
+		if err != nil {
+			t.Fatalf("case %d: Predict failed: %v", i, err)
+		}
+
+		leafModel := model.EnsembleWithLeafPredictions()
+		leafSep := make([]float64, leafModel.NOutputGroups())
+		err = leafModel.Predict(fvals, 0, leafSep)
+		if err != nil {
+			t.Fatalf("case %d: leaf Predict failed: %v", i, err)
+		}
+
+		predCombined := make([]float64, 1)
+		leafCombined := make([]float64, nLeafIndices)
+		err = model.PredictWithLeafIndices(fvals, nEstimators, predCombined, leafCombined)
+		if err != nil {
+			t.Fatalf("case %d: PredictWithLeafIndices failed: %v", i, err)
+		}
+
+		if !util.AlmostEqualFloat64(predSep[0], predCombined[0], 1e-10) {
+			t.Errorf("case %d: prediction mismatch: separate=%f combined=%f", i, predSep[0], predCombined[0])
+		}
+		for j := 0; j < nLeafIndices; j++ {
+			if uint32(leafSep[j]) != uint32(leafCombined[j]) {
+				t.Errorf("case %d: leaf index %d mismatch: separate=%v combined=%v", i, j, leafSep[j], leafCombined[j])
+			}
+		}
+	}
+}
+
+func TestPredictWithLeafIndicesLogistic(t *testing.T) {
+	modelPath := filepath.Join("testdata", "lg_breast_cancer.txt")
+	testPath := filepath.Join("testdata", "lg_breast_cancer_data.txt")
+
+	model, err := LGEnsembleFromFile(modelPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	test, err := mat.DenseMatFromCsvFile(testPath, 0, false, " ", 0.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nEstimators := model.NEstimators()
+	nLeafIndices := model.NRawOutputGroups() * nEstimators
+
+	leafModel := model.EnsembleWithLeafPredictions()
+
+	for row := 0; row < test.Rows; row++ {
+		fvals := test.Values[row*test.Cols : (row+1)*test.Cols]
+
+		predSep := make([]float64, 1)
+		err := model.Predict(fvals, nEstimators, predSep)
+		if err != nil {
+			t.Fatalf("row %d: Predict failed: %v", row, err)
+		}
+
+		leafSep := make([]float64, leafModel.NOutputGroups())
+		err = leafModel.Predict(fvals, 0, leafSep)
+		if err != nil {
+			t.Fatalf("row %d: leaf Predict failed: %v", row, err)
+		}
+
+		predCombined := make([]float64, 1)
+		leafCombined := make([]float64, nLeafIndices)
+		err = model.PredictWithLeafIndices(fvals, nEstimators, predCombined, leafCombined)
+		if err != nil {
+			t.Fatalf("row %d: PredictWithLeafIndices failed: %v", row, err)
+		}
+
+		if !util.AlmostEqualFloat64(predSep[0], predCombined[0], 1e-10) {
+			t.Errorf("row %d: prediction mismatch: separate=%f combined=%f", row, predSep[0], predCombined[0])
+		}
+		for j := 0; j < nLeafIndices; j++ {
+			if uint32(leafSep[j]) != uint32(leafCombined[j]) {
+				t.Errorf("row %d: leaf index %d mismatch: separate=%v combined=%v", row, j, leafSep[j], leafCombined[j])
+			}
+		}
+	}
+}
+
 func TestLeafCountsJSON(t *testing.T) {
 	modelPath := filepath.Join("testdata", "lg_1tree.json")
 	modelFile, err := os.Open(modelPath)
