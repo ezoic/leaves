@@ -95,6 +95,42 @@ func (e *Ensemble) Predict(fvals []float64, nEstimators int, predictions []float
 	return nil
 }
 
+// PredictWithLeafIndices performs a single tree traversal to produce both
+// transformed predictions and raw leaf indices for each tree, avoiding the
+// overhead of a second traversal. leafIndices must have length
+// NRawOutputGroups() * nEstimators. Only supported for LightGBM ensembles.
+func (e *Ensemble) PredictWithLeafIndices(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64) error {
+	if e.NFeatures() > len(fvals) {
+		return fmt.Errorf("incorrect number of features (%d)", len(fvals))
+	}
+	nEstimators = e.adjustNEstimators(nEstimators)
+	err := e.checkNEstimators(nEstimators)
+	if err != nil {
+		return err
+	}
+	nLeafIndices := e.NRawOutputGroups() * nEstimators
+	if len(predictions) < e.NOutputGroups() {
+		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NOutputGroups())
+	}
+	if len(leafIndices) < nLeafIndices {
+		return fmt.Errorf("leafIndices slice too short (should be at least %d)", nLeafIndices)
+	}
+
+	lgE, ok := e.ensembleBaseInterface.(*lgEnsemble)
+	if !ok {
+		return fmt.Errorf("PredictWithLeafIndices only supported for LightGBM ensembles")
+	}
+
+	if e.Transformation().Type() == transformation.Raw {
+		lgE.predictWithLeafIndices(fvals, nEstimators, predictions, leafIndices, 0)
+	} else {
+		rawPredictions := make([]float64, e.NRawOutputGroups())
+		lgE.predictWithLeafIndices(fvals, nEstimators, rawPredictions, leafIndices, 0)
+		e.transform.Transform(rawPredictions, predictions, 0)
+	}
+	return nil
+}
+
 // PredictCSR calculates predictions from ensemble. `indptr`, `cols`, `vals`
 // represent data structures from Compressed Sparse Row Matrix format (see
 // CSRMat). Only `nEstimators` first estimators (trees) will be used.

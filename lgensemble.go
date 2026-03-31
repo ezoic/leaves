@@ -1,6 +1,8 @@
 package leaves
 
 import (
+	"sync"
+
 	"github.com/ezoic/leaves/util"
 )
 
@@ -16,6 +18,8 @@ type lgEnsemble struct {
 	// NOTE: LightGBM original implementation always divides result by NEstimators() if average_output set.
 	// `leaves` implementation divides result by nEstimators (adjusted number of trees used for prediction)
 	averageOutput bool
+	cachedLeafCounts     [][]int64
+	cachedLeafCountsOnce sync.Once
 }
 
 func (e *lgEnsemble) NEstimators() int {
@@ -47,12 +51,16 @@ func (e *lgEnsemble) NLeaves() []int {
 // Returns a slice of length len(Trees), where each inner slice contains the
 // sample counts for that tree's leaves. Returns nil slices for trees without
 // leaf count data (e.g., if the model file didn't include leaf_count).
+// The returned slice is cached and must not be modified by the caller.
 func (e *lgEnsemble) LeafCounts() [][]int64 {
-	result := make([][]int64, len(e.Trees))
-	for i := range e.Trees {
-		result[i] = e.Trees[i].leafCounts
-	}
-	return result
+	e.cachedLeafCountsOnce.Do(func() {
+		result := make([][]int64, len(e.Trees))
+		for i := range e.Trees {
+			result[i] = e.Trees[i].leafCounts
+		}
+		e.cachedLeafCounts = result
+	})
+	return e.cachedLeafCounts
 }
 
 func (e *lgEnsemble) Name() string {
@@ -73,6 +81,27 @@ func (e *lgEnsemble) predictInner(fvals []float64, nEstimators int, predictions 
 		for k := 0; k < e.nRawOutputGroups; k++ {
 			pred, _ := e.Trees[i*e.nRawOutputGroups+k].predict(fvals)
 			predictions[startIndex+k] += pred * coef
+		}
+	}
+}
+
+// predictWithLeafIndices performs a single tree traversal to produce both
+// prediction values and leaf indices, avoiding the cost of a second pass.
+func (e *lgEnsemble) predictWithLeafIndices(fvals []float64, nEstimators int, predictions []float64, leafIndices []float64, predStartIndex int) {
+	for k := 0; k < e.nRawOutputGroups; k++ {
+		predictions[predStartIndex+k] = 0.0
+	}
+
+	coef := 1.0
+	if e.averageOutput {
+		coef = 1.0 / float64(nEstimators)
+	}
+
+	for i := 0; i < nEstimators; i++ {
+		for k := 0; k < e.nRawOutputGroups; k++ {
+			pred, idx := e.Trees[i*e.nRawOutputGroups+k].predict(fvals)
+			predictions[predStartIndex+k] += pred * coef
+			leafIndices[k*nEstimators+i] = float64(idx)
 		}
 	}
 }
