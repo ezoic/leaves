@@ -37,10 +37,19 @@ type lgTree struct {
 }
 
 func (t *lgTree) numericalDecision(node *lgNode, fval float64) bool {
-	if math.IsNaN(fval) && (node.Flags&missingNan == 0) {
+	if node.Flags&(missingZero|missingNan) == 0 {
+		if math.IsNaN(fval) {
+			fval = 0.0
+		}
+		return fval <= node.Threshold
+	}
+	if math.IsNaN(fval) {
+		if node.Flags&missingNan > 0 {
+			return node.Flags&defaultLeft > 0
+		}
 		fval = 0.0
 	}
-	if ((node.Flags&missingZero > 0) && isZero(fval)) || ((node.Flags&missingNan > 0) && math.IsNaN(fval)) {
+	if (node.Flags&missingZero > 0) && isZero(fval) {
 		return node.Flags&defaultLeft > 0
 	}
 	// Note: LightGBM uses `<=`, but XGBoost uses `<`
@@ -51,11 +60,11 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64) bool {
 	ifval := int32(fval)
 	if ifval < 0 {
 		return false
-	} else if math.IsNaN(fval) {
-		if node.Flags&missingNan > 0 {
-			return false
-		}
-		ifval = 0
+	}
+	// int32(NaN) == 0 in Go, so NaN is only possible when ifval == 0.
+	// Only check IsNaN when the node has missingNan set AND ifval is 0.
+	if ifval == 0 && node.Flags&missingNan > 0 && math.IsNaN(fval) {
+		return false
 	}
 	if node.Flags&catOneHot > 0 {
 		return int32(node.Threshold) == ifval
@@ -95,14 +104,15 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 }
 
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
-	i1 := pos / 32
-	idxS := t.catBoundaries[idx]
-	idxE := t.catBoundaries[idx+1]
+	i1 := pos >> 5
+	// BCE: access higher index first so compiler proves both are in bounds.
+	boundaries := t.catBoundaries
+	idxE := boundaries[idx+1]
+	idxS := boundaries[idx]
 	if i1 >= (idxE - idxS) {
 		return false
 	}
-	i2 := pos % 32
-	return (t.catThresholds[idxS+i1]>>i2)&1 > 0
+	return (t.catThresholds[idxS+i1]>>(pos&31))&1 > 0
 }
 
 func (t *lgTree) nLeaves() int {

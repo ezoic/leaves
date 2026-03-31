@@ -435,6 +435,111 @@ func TestLeafCountsTree2Leaves(t *testing.T) {
 	}
 }
 
+func TestPredictWithLeafIndices(t *testing.T) {
+	modelPath := filepath.Join("testdata", "lg_breast_cancer.txt")
+	testPath := filepath.Join("testdata", "lg_breast_cancer_data.txt")
+	predLeavesTruthPath := filepath.Join("testdata", "lg_breast_cancer_data_pred_leaves.txt")
+
+	model, err := LGEnsembleFromFile(modelPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	test, err := mat.DenseMatFromCsvFile(testPath, 0, false, " ", 0.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	predLeavesTruth, err := mat.DenseMatFromCsvFile(predLeavesTruthPath, 0, false, " ", 0.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nEstimators := model.NEstimators()
+	nGroups := model.NRawOutputGroups()
+	nLeafIndices := nGroups * nEstimators
+
+	for row := 0; row < test.Rows; row++ {
+		fvals := test.Values[row*test.Cols : (row+1)*test.Cols]
+
+		// Two-pass approach (existing)
+		predTwoPass := make([]float64, model.NOutputGroups())
+		err := model.Predict(fvals, 0, predTwoPass)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		leafModel := model.EnsembleWithLeafPredictions()
+		leafTwoPass := make([]float64, leafModel.NOutputGroups())
+		err = leafModel.Predict(fvals, 0, leafTwoPass)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Single-pass approach (new)
+		predSinglePass := make([]float64, model.NOutputGroups())
+		leafSinglePass := make([]float64, nLeafIndices)
+		err = model.PredictWithLeafIndices(fvals, 0, predSinglePass, leafSinglePass)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Predictions must match exactly
+		if err := util.AlmostEqualFloat64Slices(predTwoPass, predSinglePass, 1e-15); err != nil {
+			t.Fatalf("row %d: predictions differ: %s", row, err)
+		}
+
+		// Leaf indices must match exactly
+		if err := util.AlmostEqualFloat64Slices(leafTwoPass, leafSinglePass, 0); err != nil {
+			t.Fatalf("row %d: leaf indices differ: %s", row, err)
+		}
+
+		// Also verify against known truth
+		trueLeaves := predLeavesTruth.Values[row*predLeavesTruth.Cols : (row+1)*predLeavesTruth.Cols]
+		for col := 0; col < predLeavesTruth.Cols; col++ {
+			if uint32(trueLeaves[col]) != uint32(leafSinglePass[col]) {
+				t.Fatalf("row %d, col %d: leaf index %d != truth %d", row, col, uint32(leafSinglePass[col]), uint32(trueLeaves[col]))
+			}
+		}
+	}
+}
+
+func TestPredictWithLeafIndicesSimple(t *testing.T) {
+	path := filepath.Join("testdata", "model_simple.txt")
+	model, err := LGEnsembleFromFile(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	denseValues := []float64{0.0, 0.0,
+		1000.0, 0.0,
+		800.0, 0.0,
+		800.0, 100,
+		0.0, 100,
+		1000, math.NaN(),
+		math.NaN(), math.NaN(),
+	}
+	truePredictions := []float64{0.29462594, 0.39565483, 0.39565483, 0.69580371, 0.69580371, 0.39565483, 0.29462594}
+
+	nEstimators := model.NEstimators()
+	nGroups := model.NRawOutputGroups()
+	nLeafIndices := nGroups * nEstimators
+
+	for row := 0; row < 7; row++ {
+		fvals := denseValues[row*2 : (row+1)*2]
+
+		predictions := make([]float64, model.NOutputGroups())
+		leafIndices := make([]float64, nLeafIndices)
+		err := model.PredictWithLeafIndices(fvals, 0, predictions, leafIndices)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !util.AlmostEqualFloat64(predictions[0], truePredictions[row], 1e-7) {
+			t.Errorf("row %d: expected %f, got %f", row, truePredictions[row], predictions[0])
+		}
+	}
+}
+
 func TestLeafCountsJSON(t *testing.T) {
 	modelPath := filepath.Join("testdata", "lg_1tree.json")
 	modelFile, err := os.Open(modelPath)
