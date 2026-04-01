@@ -54,9 +54,9 @@ func xgTreeFromTreeModel(origTree *xgbin.TreeModel, numFeatures uint32) (lgTree,
 		node := lgNode{}
 		// count nan as missing value
 		// NOTE: this differs with XGBosst realization: could be a problem
-		missingType := uint8(missingNan)
+		missingType := uint16(missingNan)
 
-		defaultType := uint8(0)
+		defaultType := uint16(0)
 		if xgDefaultLeft(origNode) {
 			defaultType = defaultLeft
 		}

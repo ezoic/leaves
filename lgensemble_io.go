@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -79,9 +80,9 @@ func lgObjectiveParse(objective string) (lgObjective, error) {
 	return objectiveStruct, nil
 }
 
-func convertMissingType(decisionType uint32) (uint8, error) {
+func convertMissingType(decisionType uint32) (uint16, error) {
 	missingTypeOrig := (decisionType >> 2) & 3
-	missingType := uint8(0)
+	missingType := uint16(0)
 	if missingTypeOrig == 0 {
 		// default value
 	} else if missingTypeOrig == 1 {
@@ -94,7 +95,7 @@ func convertMissingType(decisionType uint32) (uint8, error) {
 	return missingType, nil
 }
 
-var stringToMissingType = map[string]uint8{
+var stringToMissingType = map[string]uint16{
 	"None": 0,
 	"Zero": missingZero,
 	"NaN":  missingNan,
@@ -183,7 +184,7 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 		if err != nil {
 			return node, err
 		}
-		defaultType := uint8(0)
+		defaultType := uint16(0)
 		if decisionTypes[idx]&(1<<1) > 0 {
 			defaultType = defaultLeft
 		}
@@ -206,10 +207,9 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 			return node, err
 		}
 
-		catIdx := uint32(thresholds[idx])
-		catType := uint8(0)
-		bitsetSize := catBoundaries[catIdx+1] - catBoundaries[catIdx]
-		thresholdSlice := catThresholds[catBoundaries[catIdx]:catBoundaries[catIdx+1]]
+		origCatIdx := uint32(thresholds[idx])
+		bitsetSize := catBoundaries[origCatIdx+1] - catBoundaries[origCatIdx]
+		thresholdSlice := catThresholds[catBoundaries[origCatIdx]:catBoundaries[origCatIdx+1]]
 		nBits := util.NumberOfSetBits(thresholdSlice)
 		if nBits == 0 {
 			return node, fmt.Errorf("no bits set")
@@ -218,19 +218,20 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 			if err != nil {
 				return node, fmt.Errorf("not reached error")
 			}
-			catIdx = i
-			catType = catOneHot
+			node = categoricalNode(splitFeatures[idx], missingType, float64(i), catOneHot)
 		} else if bitsetSize == 1 {
-			catIdx = catThresholds[catBoundaries[catIdx]]
-			catType = catSmall
+			node = categoricalNode(splitFeatures[idx], missingType, float64(catThresholds[catBoundaries[origCatIdx]]), catSmall)
+		} else if bitsetSize == 2 {
+			packed := uint64(thresholdSlice[0]) | uint64(thresholdSlice[1])<<32
+			node = categoricalNode(splitFeatures[idx], missingType, math.Float64frombits(packed), catMedium)
 		} else {
-			// regular case with large bitset
-			catIdx = uint32(len(t.catBoundaries) - 1)
+			// Large bitset: store index into per-tree catBoundaries; catType 0 means findInBitset path.
+			newIdx := uint32(len(t.catBoundaries) - 1)
 			t.catThresholds = append(t.catThresholds, thresholdSlice...)
 			t.catBoundaries = append(t.catBoundaries, uint32(len(t.catThresholds)))
+			node = categoricalNode(splitFeatures[idx], missingType, float64(newIdx), 0)
 		}
 
-		node = categoricalNode(splitFeatures[idx], missingType, catIdx, catType)
 		if leftChilds[idx] < 0 {
 			node.Flags |= leftLeaf
 			node.Left = uint32(^leftChilds[idx])
@@ -500,7 +501,7 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 		if !isFound {
 			return node, fmt.Errorf("unknown missing_type '%s'", nodeJSON.MissingType)
 		}
-		defaultType := uint8(0)
+		defaultType := uint16(0)
 		if nodeJSON.DefaultLeft {
 			defaultType = defaultLeft
 		}
@@ -538,8 +539,6 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 		tokens := strings.Split(thresholdString, "||")
 
 		nBits := len(tokens)
-		catIdx := uint32(0)
-		catType := uint8(0)
 		if nBits == 0 {
 			return node, fmt.Errorf("no bits set")
 		} else if nBits == 1 {
@@ -547,8 +546,7 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 			if err != nil {
 				return node, fmt.Errorf("can't convert %s: %s", tokens[0], err.Error())
 			}
-			catIdx = uint32(value)
-			catType = catOneHot
+			node = categoricalNode(nodeJSON.SplitFeature, missingType, float64(uint32(value)), catOneHot)
 		} else {
 			thresholdValues := make([]int, len(tokens))
 			for i, valueStr := range tokens {
@@ -561,17 +559,18 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 
 			bitset := util.ConstructBitset(thresholdValues)
 			if len(bitset) == 1 {
-				catIdx = bitset[0]
-				catType = catSmall
+				node = categoricalNode(nodeJSON.SplitFeature, missingType, float64(bitset[0]), catSmall)
+			} else if len(bitset) == 2 {
+				packed := uint64(bitset[0]) | uint64(bitset[1])<<32
+				node = categoricalNode(nodeJSON.SplitFeature, missingType, math.Float64frombits(packed), catMedium)
 			} else {
-				// regular case with large bitset
-				catIdx = uint32(len(t.catBoundaries) - 1)
+				catIdx := uint32(len(t.catBoundaries) - 1)
 				t.catThresholds = append(t.catThresholds, bitset...)
 				t.catBoundaries = append(t.catBoundaries, uint32(len(t.catThresholds)))
+				node = categoricalNode(nodeJSON.SplitFeature, missingType, float64(catIdx), 0)
 			}
 		}
 
-		node = categoricalNode(nodeJSON.SplitFeature, missingType, catIdx, catType)
 		if leaf, ok := nodeJSON.LeftChild.(lgLeafJSON); ok {
 			node.Flags |= leftLeaf
 			node.Left = uint32(len(t.leafValues))
