@@ -540,6 +540,46 @@ func TestPredictWithLeafIndicesSimple(t *testing.T) {
 	}
 }
 
+func TestCatMediumDecision(t *testing.T) {
+	tree := lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, math.Float64frombits(
+				uint64(1<<5|1<<10|1<<31) | uint64(1<<(33-32)|1<<(50-32))<<32,
+			), catMedium),
+		},
+		leafValues: []float64{1.0, 2.0},
+	}
+	tree.nodes[0].Flags |= leftLeaf | rightLeaf
+	tree.nodes[0].Left = 0
+	tree.nodes[0].Right = 1
+
+	tests := []struct {
+		fval     float64
+		expected float64
+	}{
+		{5.0, 1.0},   // bit 5 set → left
+		{10.0, 1.0},  // bit 10 set → left
+		{31.0, 1.0},  // bit 31 set → left
+		{33.0, 1.0},  // bit 33 set → left
+		{50.0, 1.0},  // bit 50 set → left
+		{0.0, 2.0},   // bit 0 not set → right
+		{6.0, 2.0},   // bit 6 not set → right
+		{32.0, 2.0},  // bit 32 not set → right
+		{63.0, 2.0},  // bit 63 not set → right
+		{64.0, 2.0},  // out of range → right
+		{100.0, 2.0}, // out of range → right
+		{-1.0, 2.0},  // negative → right
+	}
+
+	for _, tc := range tests {
+		fvals := []float64{tc.fval}
+		pred, _ := tree.predict(fvals)
+		if pred != tc.expected {
+			t.Errorf("fval=%f: expected %f, got %f", tc.fval, tc.expected, pred)
+		}
+	}
+}
+
 func TestLeafCountsJSON(t *testing.T) {
 	modelPath := filepath.Join("testdata", "lg_1tree.json")
 	modelFile, err := os.Open(modelPath)

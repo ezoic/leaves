@@ -15,6 +15,7 @@ const (
 	missingNan  = 1 << 5
 	catOneHot   = 1 << 6
 	catSmall    = 1 << 7
+	catMedium   = 1 << 8 // 64-bit inline bitset stored in Threshold via Float64frombits
 )
 
 const zeroThreshold = 1e-35
@@ -24,7 +25,7 @@ type lgNode struct {
 	Left      uint32
 	Right     uint32
 	Feature   uint32
-	Flags     uint8
+	Flags     uint16
 }
 
 type lgTree struct {
@@ -68,6 +69,12 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64) bool {
 	}
 	if node.Flags&catOneHot > 0 {
 		return int32(node.Threshold) == ifval
+	} else if node.Flags&catMedium > 0 {
+		if ifval >= 64 {
+			return false
+		}
+		bits := math.Float64bits(node.Threshold)
+		return (bits>>uint(ifval))&1 != 0
 	} else if node.Flags&catSmall > 0 {
 		return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
 	}
@@ -127,15 +134,15 @@ func isZero(fval float64) bool {
 	return (fval > -zeroThreshold && fval <= zeroThreshold)
 }
 
-func categoricalNode(feature uint32, missingType uint8, threshold uint32, catType uint8) lgNode {
+func categoricalNode(feature uint32, missingType uint16, threshold float64, catType uint16) lgNode {
 	node := lgNode{}
 	node.Feature = feature
 	node.Flags = categorical | missingType | catType
-	node.Threshold = float64(threshold)
+	node.Threshold = threshold
 	return node
 }
 
-func numericalNode(feature uint32, missingType uint8, threshold float64, defaultType uint8) lgNode {
+func numericalNode(feature uint32, missingType uint16, threshold float64, defaultType uint16) lgNode {
 	node := lgNode{}
 	node.Feature = feature
 	node.Flags = missingType | defaultType
