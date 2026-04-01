@@ -207,10 +207,9 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 			return node, err
 		}
 
-		catIdx := uint32(thresholds[idx])
-		catType := uint16(0)
-		bitsetSize := catBoundaries[catIdx+1] - catBoundaries[catIdx]
-		thresholdSlice := catThresholds[catBoundaries[catIdx]:catBoundaries[catIdx+1]]
+		origCatIdx := uint32(thresholds[idx])
+		bitsetSize := catBoundaries[origCatIdx+1] - catBoundaries[origCatIdx]
+		thresholdSlice := catThresholds[catBoundaries[origCatIdx]:catBoundaries[origCatIdx+1]]
 		nBits := util.NumberOfSetBits(thresholdSlice)
 		if nBits == 0 {
 			return node, fmt.Errorf("no bits set")
@@ -221,15 +220,16 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 			}
 			node = categoricalNode(splitFeatures[idx], missingType, float64(i), catOneHot)
 		} else if bitsetSize == 1 {
-			node = categoricalNode(splitFeatures[idx], missingType, float64(catThresholds[catBoundaries[catIdx]]), catSmall)
+			node = categoricalNode(splitFeatures[idx], missingType, float64(catThresholds[catBoundaries[origCatIdx]]), catSmall)
 		} else if bitsetSize == 2 {
 			packed := uint64(thresholdSlice[0]) | uint64(thresholdSlice[1])<<32
 			node = categoricalNode(splitFeatures[idx], missingType, math.Float64frombits(packed), catMedium)
 		} else {
-			catIdx = uint32(len(t.catBoundaries) - 1)
+			// Large bitset: store index into per-tree catBoundaries; catType 0 means findInBitset path.
+			newIdx := uint32(len(t.catBoundaries) - 1)
 			t.catThresholds = append(t.catThresholds, thresholdSlice...)
 			t.catBoundaries = append(t.catBoundaries, uint32(len(t.catThresholds)))
-			node = categoricalNode(splitFeatures[idx], missingType, float64(catIdx), catType)
+			node = categoricalNode(splitFeatures[idx], missingType, float64(newIdx), 0)
 		}
 
 		if leftChilds[idx] < 0 {

@@ -73,6 +73,9 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64) bool {
 		if ifval >= 64 {
 			return false
 		}
+		// Safe: Float64bits/Float64frombits are Go-spec-guaranteed bitwise
+		// identity operations. The packed uint64 is never passed through FP
+		// arithmetic, so NaN bit patterns are preserved unchanged.
 		bits := math.Float64bits(node.Threshold)
 		return (bits>>uint(ifval))&1 != 0
 	} else if node.Flags&catSmall > 0 {
