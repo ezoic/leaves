@@ -92,21 +92,23 @@ func (t *lgTree) decision(node *lgNode, fval float64) bool {
 }
 
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
-	if len(t.nodes) == 0 {
+	nodes := t.nodes
+	if len(nodes) == 0 {
 		return t.leafValues[0], 0
 	}
+	leafValues := t.leafValues
 	idx := uint32(0)
 	for {
-		node := &t.nodes[idx]
+		node := &nodes[idx]
 		left := t.decision(node, fvals[node.Feature])
 		if left {
 			if node.Flags&leftLeaf > 0 {
-				return t.leafValues[node.Left], node.Left
+				return leafValues[node.Left], node.Left
 			}
 			idx = node.Left
 		} else {
 			if node.Flags&rightLeaf > 0 {
-				return t.leafValues[node.Right], node.Right
+				return leafValues[node.Right], node.Right
 			}
 			idx++
 		}
@@ -116,13 +118,15 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
 	i1 := pos >> 5
 	// BCE: access higher index first so compiler proves both are in bounds.
+	// Local slice variables avoid repeated receiver indirection on this path.
 	boundaries := t.catBoundaries
+	thresholds := t.catThresholds
 	idxE := boundaries[idx+1]
 	idxS := boundaries[idx]
 	if i1 >= (idxE - idxS) {
 		return false
 	}
-	return (t.catThresholds[idxS+i1]>>(pos&31))&1 > 0
+	return (thresholds[idxS+i1]>>(pos&31))&1 > 0
 }
 
 func (t *lgTree) nLeaves() int {

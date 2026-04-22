@@ -113,6 +113,10 @@ Single thread:
 
 (*) - KDD Cup 99 problem involves continuous and categorical features simultaneously
 
+## Performance (LightGBM inference)
+
+Production CPU profiles (e.g. adserver CTR ensemble) spend most time in tree walk and categorical bitset tests. In `lgTree.predict` and `findInBitset`, slice headers (`nodes`, `leafValues`, `catBoundaries`, `catThresholds`) are copied to locals so the hot path does not reload them through the receiver on every iteration or bit test.
+
 ## Limitations
 
   * LightGBM models:
