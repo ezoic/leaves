@@ -117,24 +117,28 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
 	// BCE: local slice variables avoid repeated receiver indirection on this path.
+	// Sub-slicing th := thresholds[idxS:idxE] lets the compiler prove th[i1] in-bounds
+	// when i1 < uint32(len(th)) without indexing the parent slice at idxS+i1 each time.
 	boundaries := t.catBoundaries
 	thresholds := t.catThresholds
 	idxS := boundaries[idx]
 	idxE := boundaries[idx+1]
-	span := idxE - idxS
+	th := thresholds[idxS:idxE]
+	span := uint32(len(th))
 	// Most large leaf-growth categorical splits use a single uint32 word; hot-path
 	// that case without a general (i1 >= span) check when span is 1.
 	if span == 1 {
 		if pos>>5 != 0 {
 			return false
 		}
-		return (thresholds[idxS]>>(pos&31))&1 > 0
+		return (th[0]>>(pos&31))&1 > 0
 	}
 	i1 := pos >> 5
 	if i1 >= span {
 		return false
 	}
-	return (thresholds[idxS+i1]>>(pos&31))&1 > 0
+	bit := pos & 31
+	return (th[i1]>>bit)&1 > 0
 }
 
 func (t *lgTree) nLeaves() int {
