@@ -34,10 +34,6 @@ _leaves_ is a library implementing prediction code for GBRT (Gradient Boosting R
     * read models from pickle format (protocol `0`)
     * support `sklearn.ensemble.GradientBoostingClassifier`
 
-## Performance
-
-LightGBM **multi-word categorical** bitset lookup (`findInBitset` in `lgtree.go`) uses a sub-slice of the threshold buffer on the hot path so the compiler can elide redundant bounds checks. This is targeted at adserver production workloads where this path is a large share of `lgTree.predict` CPU time.
-
 ## Usage examples
 
 In order to start, go get this repository:

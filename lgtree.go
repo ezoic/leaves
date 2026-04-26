@@ -121,8 +121,8 @@ func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
 	// when i1 < uint32(len(th)) without indexing the parent slice at idxS+i1 each time.
 	boundaries := t.catBoundaries
 	thresholds := t.catThresholds
-	idxS := boundaries[idx]
 	idxE := boundaries[idx+1]
+	idxS := boundaries[idx]
 	th := thresholds[idxS:idxE]
 	span := uint32(len(th))
 	// Most large leaf-growth categorical splits use a single uint32 word; hot-path
