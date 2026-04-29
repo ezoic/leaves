@@ -114,7 +114,7 @@ Single thread:
 
 ## Performance (LightGBM inference)
 
-Production CPU profiles (e.g. adserver CTR ensemble) spend most time in tree walk and categorical bitset tests. In `lgTree.predict` and `findInBitset`, slice headers (`nodes`, `leafValues`, `catBoundaries`, `catThresholds`) are copied to locals so the hot path does not reload them through the receiver on every iteration or bit test. `findInBitset` also special-cases `span == 1` (a single 32-bit word between boundary markers), which is common for categorical features and avoids the generic index check on that path.
+Production CPU profiles (e.g. adserver CTR ensemble) spend most time in tree walk and categorical bitset tests. In `lgTree.predict` and `findInBitset`, slice headers (`nodes`, `leafValues`, `catBoundaries`, `catThresholds`) are copied to locals so the hot path does not reload them through the receiver on every iteration or bit test. `predict` branches categorical vs numerical decisions in the traversal loop to avoid an extra call per depth level. `findInBitset` indexes `catThresholds` at `idxS+i1` instead of sub-slicing to the bitset range, avoiding a temporary slice header on every categorical test, and special-cases `span == 1` (a single 32-bit word between boundary markers), which is common for categorical features and avoids the generic index check on that path.
 
 ## Limitations
 
