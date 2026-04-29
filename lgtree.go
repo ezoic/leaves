@@ -84,13 +84,6 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64) bool {
 	return t.findInBitset(uint32(node.Threshold), uint32(ifval))
 }
 
-func (t *lgTree) decision(node *lgNode, fval float64) bool {
-	if node.Flags&categorical > 0 {
-		return t.categoricalDecision(node, fval)
-	}
-	return t.numericalDecision(node, fval)
-}
-
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 	nodes := t.nodes
 	if len(nodes) == 0 {
@@ -100,7 +93,12 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 	idx := uint32(0)
 	for {
 		node := &nodes[idx]
-		left := t.decision(node, fvals[node.Feature])
+		var left bool
+		if node.Flags&categorical > 0 {
+			left = t.categoricalDecision(node, fvals[node.Feature])
+		} else {
+			left = t.numericalDecision(node, fvals[node.Feature])
+		}
 		if left {
 			if node.Flags&leftLeaf > 0 {
 				return leafValues[node.Left], node.Left
@@ -116,29 +114,27 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 }
 
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
-	// BCE: local slice variables avoid repeated receiver indirection on this path.
-	// Sub-slicing th := thresholds[idxS:idxE] lets the compiler prove th[i1] in-bounds
-	// when i1 < uint32(len(th)) without indexing the parent slice at idxS+i1 each time.
+	// Index directly into catThresholds with base idxS instead of sub-slicing.
+	// Avoids a slice header on every categorical bitset test on the hot path.
 	boundaries := t.catBoundaries
 	thresholds := t.catThresholds
 	idxE := boundaries[idx+1]
 	idxS := boundaries[idx]
-	th := thresholds[idxS:idxE]
-	span := uint32(len(th))
+	span := idxE - idxS
+	bit := pos & 31
 	// Most large leaf-growth categorical splits use a single uint32 word; hot-path
 	// that case without a general (i1 >= span) check when span is 1.
 	if span == 1 {
 		if pos>>5 != 0 {
 			return false
 		}
-		return (th[0]>>(pos&31))&1 > 0
+		return (thresholds[idxS]>>bit)&1 > 0
 	}
 	i1 := pos >> 5
 	if i1 >= span {
 		return false
 	}
-	bit := pos & 31
-	return (th[i1]>>bit)&1 > 0
+	return (thresholds[idxS+i1]>>bit)&1 > 0
 }
 
 func (t *lgTree) nLeaves() int {
