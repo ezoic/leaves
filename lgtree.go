@@ -114,28 +114,21 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 }
 
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
-	boundaries := t.catBoundaries
-	thresholds := t.catThresholds
-	idxE := boundaries[idx+1]
-	idxS := boundaries[idx]
+	th := t.catThresholds
+	bd := t.catBoundaries
+	idxS := bd[idx]
+	idxE := bd[idx+1]
 	span := idxE - idxS
-	bit := pos & 31
-	// Most large leaf-growth categorical splits use a single uint32 word; hot-path
-	// that case without a general (i1 >= span) check when span is 1.
-	if span == 1 {
-		if pos>>5 != 0 {
-			return false
-		}
-		return (thresholds[idxS]>>bit)&1 != 0
-	}
-	i1 := pos >> 5
-	if i1 >= span {
+	word := pos >> 5
+	// Same condition covers single-word thresholds (most common sparse splits)
+	// and multi-word run-length encodings without a branch on span alone.
+	if word >= span {
 		return false
 	}
-	// Slice once to establish a bounded region for this hot word lookup; this
-	// keeps the indexing pattern friendly to the compiler's BCE pass.
-	words := thresholds[idxS:idxE]
-	return (words[i1]>>bit)&1 != 0
+	bit := pos & 31
+	// Bounds: word < span and span == idxE-idxS ⇒ idxS+word < idxE ≤ len(th)
+	_ = th[idxS+span-1]
+	return (th[idxS+word]>>bit)&1 != 0
 }
 
 func (t *lgTree) nLeaves() int {

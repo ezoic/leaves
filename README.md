@@ -114,7 +114,7 @@ Single thread:
 
 ## Performance (LightGBM inference)
 
-Production CPU profiles (e.g. adserver CTR ensemble) spend most time in tree walk and categorical bitset tests. In `lgTree.predict` and `findInBitset`, slice headers (`nodes`, `leafValues`, `catBoundaries`, `catThresholds`) are copied to locals so the hot path does not reload them through the receiver on every iteration or bit test. `predict` branches categorical vs numerical decisions in the traversal loop to avoid an extra call per depth level. For multi-word categorical bitsets, `findInBitset` sub-slices `catThresholds` once to `[idxS:idxE]` before indexing word `i1`, giving the hot word lookup a bounded indexing region that is friendly to the compiler's bounds-check elimination pass; the single-word case (`span == 1`) still indexes `thresholds[idxS]` directly to avoid slicing when only one word is stored.
+Production CPU profiles (e.g. adserver CTR ensemble) spend most time in tree walk and categorical bitset tests. In `lgTree.predict` and `findInBitset`, slice headers (`nodes`, `leafValues`, `catBoundaries`, `catThresholds`) are copied to locals so the hot path does not reload them through the receiver on every iteration or bit test. `predict` branches categorical vs numerical decisions in the traversal loop to avoid an extra call per depth level. For categorical bitsets, `findInBitset` rejects out-of-range word indices (`pos >> 5 >= span`) in one branch for both single- and multi-word runs, then loads the word as `catThresholds[idxS+word]` with a preceding touch of `catThresholds[idxS+span-1]` so bounds-check elimination can prove `idxS+word` stays within `[idxS, idxE)` without constructing a slice header on each call.
 
 ## Limitations
 
