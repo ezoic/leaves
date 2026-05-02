@@ -132,8 +132,8 @@ func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
 	if i1 >= span {
 		return false
 	}
-	// Slice once so i1 is proved against len(words); reduces repeated base+idx
-	// bound checks versus thresholds[idxS+i1] after profile showed this path hot.
+	// Slice once to establish a bounded region for this hot word lookup; this
+	// keeps the indexing pattern friendly to the compiler's BCE pass.
 	words := thresholds[idxS:idxE]
 	return (words[i1]>>bit)&1 != 0
 }
