@@ -114,8 +114,6 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 }
 
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
-	// Index directly into catThresholds with base idxS instead of sub-slicing.
-	// Avoids a slice header on every categorical bitset test on the hot path.
 	boundaries := t.catBoundaries
 	thresholds := t.catThresholds
 	idxE := boundaries[idx+1]
@@ -128,13 +126,16 @@ func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
 		if pos>>5 != 0 {
 			return false
 		}
-		return (thresholds[idxS]>>bit)&1 > 0
+		return (thresholds[idxS]>>bit)&1 != 0
 	}
 	i1 := pos >> 5
 	if i1 >= span {
 		return false
 	}
-	return (thresholds[idxS+i1]>>bit)&1 > 0
+	// Slice once to establish a bounded region for this hot word lookup; this
+	// keeps the indexing pattern friendly to the compiler's BCE pass.
+	words := thresholds[idxS:idxE]
+	return (words[i1]>>bit)&1 != 0
 }
 
 func (t *lgTree) nLeaves() int {
