@@ -36,6 +36,38 @@ func skipBenchmarkIfFileNotExist(t *testing.B, filenames ...string) {
 	}
 }
 
+var benchmarkFindInBitsetResult bool
+
+func BenchmarkLGTreeFindInBitset(b *testing.B) {
+	tree := &lgTree{
+		catBoundaries: []uint32{0, 1, 4},
+		catThresholds: []uint32{
+			1<<3 | 1<<17,
+			1 << 5,
+			1 << 11,
+			1 << 29,
+		},
+	}
+	queries := []struct {
+		idx uint32
+		pos uint32
+	}{
+		{idx: 0, pos: 3},   // single-word hit
+		{idx: 0, pos: 41},  // single-word miss outside span
+		{idx: 1, pos: 5},   // first word hit
+		{idx: 1, pos: 43},  // middle word hit
+		{idx: 1, pos: 93},  // last word hit
+		{idx: 1, pos: 127}, // multi-word miss outside span
+	}
+
+	var result bool
+	for i := 0; i < b.N; i++ {
+		q := queries[i%len(queries)]
+		result = tree.findInBitset(q.idx, q.pos)
+	}
+	benchmarkFindInBitsetResult = result
+}
+
 func TestLGMSLTR(t *testing.T) {
 	InnerTestLGMSLTR(t, 1)
 	InnerTestLGMSLTR(t, 2)
@@ -944,7 +976,6 @@ func TestGenlinFMTPPoisson(t *testing.T) {
 		t.Errorf("different predictions: %s", err.Error())
 	}
 }
-
 
 func TestGenlinFMTPGamma(t *testing.T) {
 	testPath := filepath.Join("testdata", "genlin_fmtp_gamma_AvgClaimAmount_features.tsv")
