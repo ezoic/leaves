@@ -116,19 +116,22 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
 	th := t.catThresholds
 	bd := t.catBoundaries
-	idxS := bd[idx]
-	idxE := bd[idx+1]
+	idxS := int(bd[idx])
+	idxE := int(bd[idx+1])
 	span := idxE - idxS
-	word := pos >> 5
+	word := int(pos >> 5)
 	// Same condition covers single-word thresholds (most common sparse splits)
 	// and multi-word run-length encodings without a branch on span alone.
 	if word >= span {
 		return false
 	}
 	bit := pos & 31
-	// Bounds: word < span and span == idxE-idxS ⇒ idxS+word < idxE ≤ len(th)
-	_ = th[idxS+span-1]
-	return (th[idxS+word]>>bit)&1 != 0
+	wordIdx := idxS + word
+	// Keep this BCE hint with BenchmarkLGTreeFindInBitset: if Go stops
+	// eliminating the second check on wordIdx, this hot categorical split path
+	// regresses silently. Verify with: go test -gcflags='-d=ssa/check_bce'.
+	_ = th[wordIdx]
+	return (th[wordIdx]>>bit)&1 != 0
 }
 
 func (t *lgTree) nLeaves() int {
