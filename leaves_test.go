@@ -38,6 +38,39 @@ func skipBenchmarkIfFileNotExist(t *testing.B, filenames ...string) {
 
 var benchmarkFindInBitsetResult bool
 
+func TestLGTreeValidateCatBitsets(t *testing.T) {
+	valid := &lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, 0, 0),
+		},
+		catBoundaries: []uint32{0, 3},
+		catThresholds: []uint32{1, 2, 4},
+	}
+	if err := valid.validateCatBitsets(); err != nil {
+		t.Fatalf("valid categorical bitset rejected: %s", err)
+	}
+
+	missingBoundary := &lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, 0, 0),
+		},
+	}
+	if err := missingBoundary.validateCatBitsets(); err == nil {
+		t.Fatal("expected missing categorical boundary error")
+	}
+
+	outOfRangeThreshold := &lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, 0, 0),
+		},
+		catBoundaries: []uint32{0, 4},
+		catThresholds: []uint32{1, 2, 4},
+	}
+	if err := outOfRangeThreshold.validateCatBitsets(); err == nil {
+		t.Fatal("expected out-of-range threshold boundary error")
+	}
+}
+
 func BenchmarkLGTreeFindInBitset(b *testing.B) {
 	tree := &lgTree{
 		catBoundaries: []uint32{0, 1, 4},
@@ -60,10 +93,12 @@ func BenchmarkLGTreeFindInBitset(b *testing.B) {
 		{idx: 1, pos: 127}, // multi-word miss outside span
 	}
 
+	th := tree.catThresholds
+	bd := tree.catBoundaries
 	var result bool
 	for i := 0; i < b.N; i++ {
 		q := queries[i%len(queries)]
-		result = tree.findInBitset(q.idx, q.pos)
+		result = lgFindInBitset(th, bd, q.idx, q.pos)
 	}
 	benchmarkFindInBitsetResult = result
 }

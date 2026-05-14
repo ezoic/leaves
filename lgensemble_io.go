@@ -296,6 +296,9 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 		origNodeIdxStack = origNodeIdxStack[:len(origNodeIdxStack)-1]
 		convNodeIdxStack = convNodeIdxStack[:len(convNodeIdxStack)-1]
 	}
+	if err := t.validateCatBitsets(); err != nil {
+		return t, err
+	}
 	return t, nil
 }
 
@@ -637,7 +640,44 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 			}
 		}
 	}
+	if err := t.validateCatBitsets(); err != nil {
+		return t, err
+	}
 	return t, nil
+}
+
+func (t *lgTree) validateCatBitsets() error {
+	if len(t.catBoundaries) > 0 {
+		prev := uint32(0)
+		for i, boundary := range t.catBoundaries {
+			if i == 0 && boundary != 0 {
+				return fmt.Errorf("cat_boundaries[0] = %d, want 0", boundary)
+			}
+			if boundary < prev {
+				return fmt.Errorf("cat_boundaries[%d] = %d before previous boundary %d", i, boundary, prev)
+			}
+			if uint64(boundary) > uint64(len(t.catThresholds)) {
+				return fmt.Errorf("cat_boundaries[%d] = %d exceeds cat_threshold length %d", i, boundary, len(t.catThresholds))
+			}
+			prev = boundary
+		}
+	}
+
+	for i := range t.nodes {
+		node := &t.nodes[i]
+		if node.Flags&categorical == 0 || node.Flags&(catOneHot|catSmall|catMedium) != 0 {
+			continue
+		}
+		catIdx := uint32(node.Threshold)
+		if float64(catIdx) != node.Threshold {
+			return fmt.Errorf("node %d has non-integer categorical threshold %v", i, node.Threshold)
+		}
+		if uint64(catIdx)+1 >= uint64(len(t.catBoundaries)) {
+			return fmt.Errorf("node %d references cat boundary %d with only %d boundaries", i, catIdx, len(t.catBoundaries))
+		}
+	}
+
+	return nil
 }
 
 // LGEnsembleFromJSON reads LightGBM model from stream with JSON data

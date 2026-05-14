@@ -57,7 +57,7 @@ func (t *lgTree) numericalDecision(node *lgNode, fval float64) bool {
 	return fval <= node.Threshold
 }
 
-func (t *lgTree) categoricalDecision(node *lgNode, fval float64) bool {
+func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32, bd []uint32) bool {
 	ifval := int32(fval)
 	if ifval < 0 {
 		return false
@@ -81,7 +81,7 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64) bool {
 	} else if node.Flags&catSmall > 0 {
 		return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
 	}
-	return t.findInBitset(uint32(node.Threshold), uint32(ifval))
+	return lgFindInBitset(th, bd, uint32(node.Threshold), uint32(ifval))
 }
 
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
@@ -90,12 +90,14 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 		return t.leafValues[0], 0
 	}
 	leafValues := t.leafValues
+	th := t.catThresholds
+	bd := t.catBoundaries
 	idx := uint32(0)
 	for {
 		node := &nodes[idx]
 		var left bool
 		if node.Flags&categorical > 0 {
-			left = t.categoricalDecision(node, fvals[node.Feature])
+			left = t.categoricalDecision(node, fvals[node.Feature], th, bd)
 		} else {
 			left = t.numericalDecision(node, fvals[node.Feature])
 		}
@@ -113,13 +115,19 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 	}
 }
 
-func (t *lgTree) findInBitset(idx uint32, pos uint32) bool {
-	th := t.catThresholds
-	bd := t.catBoundaries
-	idxS := int(bd[idx])
-	idxE := int(bd[idx+1])
+// lgFindInBitset tests whether category pos is set in the bitset run referenced
+// by idx into catThresholds, using catBoundaries for [start, end) word indices.
+// th and bd should be the same slices as lgTree.catThresholds / catBoundaries;
+// predict hoists them so this path does not reload slice headers from the
+// receiver on every categorical split.
+// LightGBM loaders validate that bd[idx:idx+2] exists and
+// bd[idx] <= bd[idx+1] <= len(th); this helper stays guard-free for the
+// categorical split hot path.
+func lgFindInBitset(th []uint32, bd []uint32, idx uint32, pos uint32) bool {
+	idxS := bd[idx]
+	idxE := bd[idx+1]
 	span := idxE - idxS
-	word := int(pos >> 5)
+	word := pos >> 5
 	// Same condition covers single-word thresholds (most common sparse splits)
 	// and multi-word run-length encodings without a branch on span alone.
 	if word >= span {
