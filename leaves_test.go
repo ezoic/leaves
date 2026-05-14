@@ -60,10 +60,12 @@ func BenchmarkLGTreeFindInBitset(b *testing.B) {
 		{idx: 1, pos: 127}, // multi-word miss outside span
 	}
 
+	th := tree.catThresholds
+	bd := tree.catBoundaries
 	var result bool
 	for i := 0; i < b.N; i++ {
 		q := queries[i%len(queries)]
-		result = tree.findInBitset(q.idx, q.pos)
+		result = lgFindInBitset(th, bd, q.idx, q.pos)
 	}
 	benchmarkFindInBitsetResult = result
 }
