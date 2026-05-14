@@ -361,7 +361,7 @@ func LGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensem
 	}
 
 	var transform transformation.Transform
-	transform = &transformation.TransformRaw{e.nRawOutputGroups}
+	transform = &transformation.TransformRaw{NumOutputGroups: e.nRawOutputGroups}
 	// NOTE: it seems that we don't nee to apply transformation to random forest models
 	// TODO: check it
 	if loadTransformation && !e.averageOutput {
@@ -386,7 +386,7 @@ func LGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensem
 				if objectiveStruct.value != e.nRawOutputGroups {
 					return nil, fmt.Errorf("got multiclass num_class != %d (got %d)", e.nRawOutputGroups, objectiveStruct.value)
 				}
-				transform = &transformation.TransformSoftmax{objectiveStruct.value}
+				transform = &transformation.TransformSoftmax{NClasses: objectiveStruct.value}
 				// multiclass num_class:13
 			} else {
 				return nil, fmt.Errorf("unknown transformation function '%s'", objectiveStr)
@@ -734,5 +734,5 @@ func LGEnsembleFromJSON(reader io.Reader, loadTransformation bool) (*Ensemble, e
 		}
 		e.Trees = append(e.Trees, tree)
 	}
-	return &Ensemble{e, &transformation.TransformRaw{e.nRawOutputGroups}}, nil
+	return &Ensemble{e, &transformation.TransformRaw{NumOutputGroups: e.nRawOutputGroups}}, nil
 }
