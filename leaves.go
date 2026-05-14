@@ -312,9 +312,12 @@ func (e *Ensemble) NFeatures() int {
 // NLeaves returns number of leaves in each tree of the ensemble. Returned
 // vector has size NRawOutputGroups() * NEstimators(). For example to get number
 // of leaves in group groupID for estimator estimatorID:
-//   NLeaves()[groupID*NEstimators() + estimatorID].
+//
+//	NLeaves()[groupID*NEstimators() + estimatorID].
+//
 // In case of NRawOutputGroups() == 1 (binary classification or regression):
-//   NLeaves()[estimatorID]
+//
+//	NLeaves()[estimatorID]
 func (e *Ensemble) NLeaves() []int {
 	return e.ensembleBaseInterface.NLeaves()
 }
@@ -344,12 +347,12 @@ func (e *Ensemble) Transformation() transformation.Transform {
 // EnsembleWithRawPredictions returns ensemble instance with TransformRaw (no
 // transformation functions will be applied to the model resulst)
 func (e *Ensemble) EnsembleWithRawPredictions() *Ensemble {
-	return &Ensemble{e, &transformation.TransformRaw{e.NRawOutputGroups()}}
+	return &Ensemble{e, &transformation.TransformRaw{NumOutputGroups: e.NRawOutputGroups()}}
 }
 
 // EnsembleWithLeafPredictions returns ensemble instance with TransformLeafIndex
 // (return trees indices instead of numerical values)
 func (e *Ensemble) EnsembleWithLeafPredictions() *Ensemble {
 	// each predictions will produce NRawOutputGroups() * NEstimators() values
-	return &Ensemble{e, &transformation.TransformLeafIndex{e.NRawOutputGroups() * e.NEstimators()}}
+	return &Ensemble{e, &transformation.TransformLeafIndex{NumOutputGroups: e.NRawOutputGroups() * e.NEstimators()}}
 }

@@ -36,7 +36,7 @@ func XGBLinearFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensemb
 	e.Weights = gbLinearModel.Weights
 
 	var transform transformation.Transform
-	transform = &transformation.TransformRaw{e.nRawOutputGroups}
+	transform = &transformation.TransformRaw{NumOutputGroups: e.nRawOutputGroups}
 	if loadTransformation {
 		if header.NameObj == "binary:logistic" {
 			transform = &transformation.TransformLogistic{}
