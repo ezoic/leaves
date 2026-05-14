@@ -120,7 +120,7 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 // th and bd should be the same slices as lgTree.catThresholds / catBoundaries;
 // predict hoists them so this path does not reload slice headers from the
 // receiver on every categorical split.
-// Callers must preserve the loader invariant that bd[idx:idx+2] exists and
+// LightGBM loaders validate that bd[idx:idx+2] exists and
 // bd[idx] <= bd[idx+1] <= len(th); this helper stays guard-free for the
 // categorical split hot path.
 func lgFindInBitset(th []uint32, bd []uint32, idx uint32, pos uint32) bool {

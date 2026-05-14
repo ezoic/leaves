@@ -38,6 +38,39 @@ func skipBenchmarkIfFileNotExist(t *testing.B, filenames ...string) {
 
 var benchmarkFindInBitsetResult bool
 
+func TestLGTreeValidateCatBitsets(t *testing.T) {
+	valid := &lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, 0, 0),
+		},
+		catBoundaries: []uint32{0, 3},
+		catThresholds: []uint32{1, 2, 4},
+	}
+	if err := valid.validateCatBitsets(); err != nil {
+		t.Fatalf("valid categorical bitset rejected: %s", err)
+	}
+
+	missingBoundary := &lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, 0, 0),
+		},
+	}
+	if err := missingBoundary.validateCatBitsets(); err == nil {
+		t.Fatal("expected missing categorical boundary error")
+	}
+
+	outOfRangeThreshold := &lgTree{
+		nodes: []lgNode{
+			categoricalNode(0, 0, 0, 0),
+		},
+		catBoundaries: []uint32{0, 4},
+		catThresholds: []uint32{1, 2, 4},
+	}
+	if err := outOfRangeThreshold.validateCatBitsets(); err == nil {
+		t.Fatal("expected out-of-range threshold boundary error")
+	}
+}
+
 func BenchmarkLGTreeFindInBitset(b *testing.B) {
 	tree := &lgTree{
 		catBoundaries: []uint32{0, 1, 4},
