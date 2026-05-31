@@ -81,7 +81,16 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32, bd
 	} else if node.Flags&catSmall > 0 {
 		return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
 	}
-	return lgFindInBitset(th, bd, uint32(node.Threshold), uint32(ifval))
+	catIdx := uint32(node.Threshold)
+	pos := uint32(ifval)
+	idxS := bd[catIdx]
+	if bd[catIdx+1]-idxS == 1 {
+		if pos>>5 != 0 {
+			return false
+		}
+		return (th[idxS]>>(pos&31))&1 != 0
+	}
+	return lgFindInBitset(th, bd, catIdx, pos)
 }
 
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
