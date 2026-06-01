@@ -71,6 +71,21 @@ func TestLGTreeValidateCatBitsets(t *testing.T) {
 	}
 }
 
+func BenchmarkLGTreeCategoricalDecisionSingleWord(b *testing.B) {
+	tree := &lgTree{
+		catBoundaries: []uint32{0, 1},
+		catThresholds: []uint32{1<<3 | 1<<17},
+	}
+	node := &lgNode{Threshold: 0, Flags: categorical}
+	th := tree.catThresholds
+	bd := tree.catBoundaries
+	var result bool
+	for i := 0; i < b.N; i++ {
+		result = tree.categoricalDecision(node, 3, th, bd)
+	}
+	benchmarkFindInBitsetResult = result
+}
+
 func BenchmarkLGTreeFindInBitset(b *testing.B) {
 	tree := &lgTree{
 		catBoundaries: []uint32{0, 1, 4},

@@ -81,7 +81,18 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32, bd
 	} else if node.Flags&catSmall > 0 {
 		return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
 	}
-	return lgFindInBitset(th, bd, uint32(node.Threshold), uint32(ifval))
+	catIdx := uint32(node.Threshold)
+	pos := uint32(ifval)
+	idxS := bd[catIdx]
+	// Keep this single-word fast path equivalent to lgFindInBitset below; it
+	// stays inline here to avoid the helper call in the common production case.
+	if bd[catIdx+1]-idxS == 1 {
+		if pos>>5 != 0 {
+			return false
+		}
+		return (th[idxS]>>(pos&31))&1 != 0
+	}
+	return lgFindInBitset(th, bd, catIdx, pos)
 }
 
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
@@ -128,6 +139,8 @@ func lgFindInBitset(th []uint32, bd []uint32, idx uint32, pos uint32) bool {
 	idxE := bd[idx+1]
 	span := idxE - idxS
 	word := pos >> 5
+	// Keep this word/bit test equivalent to categoricalDecision's inlined
+	// span==1 fast path above.
 	// Same condition covers single-word thresholds (most common sparse splits)
 	// and multi-word run-length encodings without a branch on span alone.
 	if word >= span {
