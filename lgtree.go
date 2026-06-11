@@ -93,15 +93,17 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32) bo
 	}
 	// Large bitset (catType 0): Threshold packs the [idxS, idxS+span) word run
 	// in catThresholds via packCatRun, so a category test needs one th load.
-	// Loaders validate idxS+span <= len(th) (validateCatBitsets), so this path
-	// stays guard-free. Same condition covers single-word thresholds (most
-	// common sparse splits) and multi-word runs without a branch on span alone.
+	// Same condition covers single-word thresholds (most common sparse splits)
+	// and multi-word runs without a branch on span alone.
 	bits := math.Float64bits(node.Threshold)
 	pos := uint32(ifval)
 	word := pos >> 5
 	if word >= uint32(bits>>32) {
 		return false
 	}
+	// Safe without a bounds check: loaders run validateCatBitsets at load
+	// time, which guarantees idxS+span <= len(th) for every catType 0 node;
+	// combined with word < span (checked above) this gives idxS+word < len(th).
 	return (th[uint32(bits)+word]>>(pos&31))&1 != 0
 }
 
