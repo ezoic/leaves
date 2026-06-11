@@ -2,6 +2,7 @@ package leaves
 
 import (
 	"bufio"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,59 +37,41 @@ func skipBenchmarkIfFileNotExist(t *testing.B, filenames ...string) {
 	}
 }
 
-var benchmarkFindInBitsetResult bool
+var benchmarkCategoricalDecisionResult bool
 
 func TestLGTreeValidateCatBitsets(t *testing.T) {
 	valid := &lgTree{
 		nodes: []lgNode{
-			categoricalNode(0, 0, 0, 0),
+			categoricalNode(0, 0, packCatRun(0, 3), 0),
 		},
-		catBoundaries: []uint32{0, 3},
 		catThresholds: []uint32{1, 2, 4},
 	}
 	if err := valid.validateCatBitsets(); err != nil {
 		t.Fatalf("valid categorical bitset rejected: %s", err)
 	}
 
-	missingBoundary := &lgTree{
+	emptyRun := &lgTree{
 		nodes: []lgNode{
-			categoricalNode(0, 0, 0, 0),
+			categoricalNode(0, 0, packCatRun(0, 0), 0),
 		},
 	}
-	if err := missingBoundary.validateCatBitsets(); err == nil {
-		t.Fatal("expected missing categorical boundary error")
+	if err := emptyRun.validateCatBitsets(); err == nil {
+		t.Fatal("expected empty categorical bitset run error")
 	}
 
-	outOfRangeThreshold := &lgTree{
+	outOfRangeRun := &lgTree{
 		nodes: []lgNode{
-			categoricalNode(0, 0, 0, 0),
+			categoricalNode(0, 0, packCatRun(1, 3), 0),
 		},
-		catBoundaries: []uint32{0, 4},
 		catThresholds: []uint32{1, 2, 4},
 	}
-	if err := outOfRangeThreshold.validateCatBitsets(); err == nil {
-		t.Fatal("expected out-of-range threshold boundary error")
+	if err := outOfRangeRun.validateCatBitsets(); err == nil {
+		t.Fatal("expected out-of-range bitset run error")
 	}
 }
 
-func BenchmarkLGTreeCategoricalDecisionSingleWord(b *testing.B) {
+func TestLGTreeCategoricalDecisionPackedRun(t *testing.T) {
 	tree := &lgTree{
-		catBoundaries: []uint32{0, 1},
-		catThresholds: []uint32{1<<3 | 1<<17},
-	}
-	node := &lgNode{Threshold: 0, Flags: categorical}
-	th := tree.catThresholds
-	bd := tree.catBoundaries
-	var result bool
-	for i := 0; i < b.N; i++ {
-		result = tree.categoricalDecision(node, 3, th, bd)
-	}
-	benchmarkFindInBitsetResult = result
-}
-
-func BenchmarkLGTreeFindInBitset(b *testing.B) {
-	tree := &lgTree{
-		catBoundaries: []uint32{0, 1, 4},
 		catThresholds: []uint32{
 			1<<3 | 1<<17,
 			1 << 5,
@@ -96,26 +79,77 @@ func BenchmarkLGTreeFindInBitset(b *testing.B) {
 			1 << 29,
 		},
 	}
-	queries := []struct {
-		idx uint32
-		pos uint32
+	singleWord := &lgNode{Threshold: packCatRun(0, 1), Flags: categorical}
+	multiWord := &lgNode{Threshold: packCatRun(1, 3), Flags: categorical}
+	cases := []struct {
+		name string
+		node *lgNode
+		fval float64
+		want bool
 	}{
-		{idx: 0, pos: 3},   // single-word hit
-		{idx: 0, pos: 41},  // single-word miss outside span
-		{idx: 1, pos: 5},   // first word hit
-		{idx: 1, pos: 43},  // middle word hit
-		{idx: 1, pos: 93},  // last word hit
-		{idx: 1, pos: 127}, // multi-word miss outside span
+		{"single-word hit", singleWord, 3, true},
+		{"single-word bit miss", singleWord, 4, false},
+		{"single-word miss outside span", singleWord, 41, false},
+		{"multi-word first word hit", multiWord, 5, true},
+		{"multi-word middle word hit", multiWord, 43, true},
+		{"multi-word last word hit", multiWord, 93, true},
+		{"multi-word bit miss", multiWord, 44, false},
+		{"multi-word miss outside span", multiWord, 127, false},
+		{"negative category", multiWord, -1, false},
+		{"NaN without missingNan", multiWord, math.NaN(), false},
+		{"NaN with missingNan", &lgNode{Threshold: packCatRun(1, 3), Flags: categorical | missingNan}, math.NaN(), false},
+	}
+	th := tree.catThresholds
+	for _, c := range cases {
+		if got := tree.categoricalDecision(c.node, c.fval, th); got != c.want {
+			t.Errorf("%s: categoricalDecision = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func BenchmarkLGTreeCategoricalDecisionSingleWord(b *testing.B) {
+	tree := &lgTree{
+		catThresholds: []uint32{1<<3 | 1<<17},
+	}
+	node := &lgNode{Threshold: packCatRun(0, 1), Flags: categorical}
+	th := tree.catThresholds
+	var result bool
+	for i := 0; i < b.N; i++ {
+		result = tree.categoricalDecision(node, 3, th)
+	}
+	benchmarkCategoricalDecisionResult = result
+}
+
+func BenchmarkLGTreeCategoricalDecisionMultiWord(b *testing.B) {
+	tree := &lgTree{
+		catThresholds: []uint32{
+			1<<3 | 1<<17,
+			1 << 5,
+			1 << 11,
+			1 << 29,
+		},
+	}
+	singleWord := &lgNode{Threshold: packCatRun(0, 1), Flags: categorical}
+	multiWord := &lgNode{Threshold: packCatRun(1, 3), Flags: categorical}
+	queries := []struct {
+		node *lgNode
+		fval float64
+	}{
+		{node: singleWord, fval: 3},  // single-word hit
+		{node: singleWord, fval: 41}, // single-word miss outside span
+		{node: multiWord, fval: 5},   // first word hit
+		{node: multiWord, fval: 43},  // middle word hit
+		{node: multiWord, fval: 93},  // last word hit
+		{node: multiWord, fval: 127}, // multi-word miss outside span
 	}
 
 	th := tree.catThresholds
-	bd := tree.catBoundaries
 	var result bool
 	for i := 0; i < b.N; i++ {
 		q := queries[i%len(queries)]
-		result = lgFindInBitset(th, bd, q.idx, q.pos)
+		result = tree.categoricalDecision(q.node, q.fval, th)
 	}
-	benchmarkFindInBitsetResult = result
+	benchmarkCategoricalDecisionResult = result
 }
 
 func TestLGMSLTR(t *testing.T) {
