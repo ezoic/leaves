@@ -32,9 +32,19 @@ type lgTree struct {
 	nodes         []lgNode
 	leafValues    []float64
 	leafCounts    []int64
-	catBoundaries []uint32
 	catThresholds []uint32
 	nCategorical  uint32
+}
+
+// packCatRun packs a large categorical bitset run [idxS, idxS+span) in
+// catThresholds into a node Threshold. Resolving the run at load time lets
+// categoricalDecision test a category with a single catThresholds load instead
+// of two extra dependent catBoundaries loads per split.
+// Safe for the same reason as catMedium: Float64bits/Float64frombits are
+// Go-spec-guaranteed bitwise identity operations and the packed value never
+// passes through FP arithmetic.
+func packCatRun(idxS, span uint32) float64 {
+	return math.Float64frombits(uint64(idxS) | uint64(span)<<32)
 }
 
 func (t *lgTree) numericalDecision(node *lgNode, fval float64) bool {
@@ -57,7 +67,7 @@ func (t *lgTree) numericalDecision(node *lgNode, fval float64) bool {
 	return fval <= node.Threshold
 }
 
-func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32, bd []uint32) bool {
+func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32) bool {
 	ifval := int32(fval)
 	if ifval < 0 {
 		return false
@@ -81,18 +91,20 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32, bd
 	} else if node.Flags&catSmall > 0 {
 		return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
 	}
-	catIdx := uint32(node.Threshold)
+	// Large bitset (catType 0): Threshold packs the [idxS, idxS+span) word run
+	// in catThresholds via packCatRun, so a category test needs one th load.
+	// Same condition covers single-word thresholds (most common sparse splits)
+	// and multi-word runs without a branch on span alone.
+	bits := math.Float64bits(node.Threshold)
 	pos := uint32(ifval)
-	idxS := bd[catIdx]
-	// Keep this single-word fast path equivalent to lgFindInBitset below; it
-	// stays inline here to avoid the helper call in the common production case.
-	if bd[catIdx+1]-idxS == 1 {
-		if pos>>5 != 0 {
-			return false
-		}
-		return (th[idxS]>>(pos&31))&1 != 0
+	word := pos >> 5
+	if word >= uint32(bits>>32) {
+		return false
 	}
-	return lgFindInBitset(th, bd, catIdx, pos)
+	// Safe without a bounds check: loaders run validateCatBitsets at load
+	// time, which guarantees idxS+span <= len(th) for every catType 0 node;
+	// combined with word < span (checked above) this gives idxS+word < len(th).
+	return (th[uint32(bits)+word]>>(pos&31))&1 != 0
 }
 
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
@@ -102,13 +114,12 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 	}
 	leafValues := t.leafValues
 	th := t.catThresholds
-	bd := t.catBoundaries
 	idx := uint32(0)
 	for {
 		node := &nodes[idx]
 		var left bool
 		if node.Flags&categorical > 0 {
-			left = t.categoricalDecision(node, fvals[node.Feature], th, bd)
+			left = t.categoricalDecision(node, fvals[node.Feature], th)
 		} else {
 			left = t.numericalDecision(node, fvals[node.Feature])
 		}
@@ -124,35 +135,6 @@ func (t *lgTree) predict(fvals []float64) (float64, uint32) {
 			idx++
 		}
 	}
-}
-
-// lgFindInBitset tests whether category pos is set in the bitset run referenced
-// by idx into catThresholds, using catBoundaries for [start, end) word indices.
-// th and bd should be the same slices as lgTree.catThresholds / catBoundaries;
-// predict hoists them so this path does not reload slice headers from the
-// receiver on every categorical split.
-// LightGBM loaders validate that bd[idx:idx+2] exists and
-// bd[idx] <= bd[idx+1] <= len(th); this helper stays guard-free for the
-// categorical split hot path.
-func lgFindInBitset(th []uint32, bd []uint32, idx uint32, pos uint32) bool {
-	idxS := bd[idx]
-	idxE := bd[idx+1]
-	span := idxE - idxS
-	word := pos >> 5
-	// Keep this word/bit test equivalent to categoricalDecision's inlined
-	// span==1 fast path above.
-	// Same condition covers single-word thresholds (most common sparse splits)
-	// and multi-word run-length encodings without a branch on span alone.
-	if word >= span {
-		return false
-	}
-	bit := pos & 31
-	wordIdx := idxS + word
-	// Keep this BCE hint with BenchmarkLGTreeFindInBitset: if Go stops
-	// eliminating the second check on wordIdx, this hot categorical split path
-	// regresses silently. Verify with: go test -gcflags='-d=ssa/check_bce'.
-	_ = th[wordIdx]
-	return (th[wordIdx]>>bit)&1 != 0
 }
 
 func (t *lgTree) nLeaves() int {

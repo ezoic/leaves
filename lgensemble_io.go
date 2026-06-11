@@ -166,8 +166,6 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 	catThresholds := make([]uint32, 0)
 	catBoundaries := make([]uint32, 0)
 	if numCategorical > 0 {
-		// first element set to zero for consistency
-		t.catBoundaries = make([]uint32, 1)
 		catThresholds, err = params.ToUint32Slice("cat_threshold")
 		if err != nil {
 			return t, err
@@ -225,11 +223,11 @@ func lgTreeFromReader(reader *bufio.Reader) (lgTree, error) {
 			packed := uint64(thresholdSlice[0]) | uint64(thresholdSlice[1])<<32
 			node = categoricalNode(splitFeatures[idx], missingType, math.Float64frombits(packed), catMedium)
 		} else {
-			// Large bitset: store index into per-tree catBoundaries; catType 0 means findInBitset path.
-			newIdx := uint32(len(t.catBoundaries) - 1)
+			// Large bitset: pack the resolved word run into Threshold; catType 0
+			// selects the packed-run path in categoricalDecision.
+			idxS := uint32(len(t.catThresholds))
 			t.catThresholds = append(t.catThresholds, thresholdSlice...)
-			t.catBoundaries = append(t.catBoundaries, uint32(len(t.catThresholds)))
-			node = categoricalNode(splitFeatures[idx], missingType, float64(newIdx), 0)
+			node = categoricalNode(splitFeatures[idx], missingType, packCatRun(idxS, bitsetSize), 0)
 		}
 
 		if leftChilds[idx] < 0 {
@@ -473,10 +471,6 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 	}
 
 	t.nCategorical = treeJSON.NumCat
-	if t.nCategorical > 0 {
-		// first element set to zero for consistency
-		t.catBoundaries = make([]uint32, 1)
-	}
 
 	if treeJSON.NumLeaves < 1 {
 		return t, fmt.Errorf("num_leaves < 1")
@@ -567,10 +561,9 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 				packed := uint64(bitset[0]) | uint64(bitset[1])<<32
 				node = categoricalNode(nodeJSON.SplitFeature, missingType, math.Float64frombits(packed), catMedium)
 			} else {
-				catIdx := uint32(len(t.catBoundaries) - 1)
+				idxS := uint32(len(t.catThresholds))
 				t.catThresholds = append(t.catThresholds, bitset...)
-				t.catBoundaries = append(t.catBoundaries, uint32(len(t.catThresholds)))
-				node = categoricalNode(nodeJSON.SplitFeature, missingType, float64(catIdx), 0)
+				node = categoricalNode(nodeJSON.SplitFeature, missingType, packCatRun(idxS, uint32(len(bitset))), 0)
 			}
 		}
 
@@ -646,34 +639,23 @@ func unmarshalTree(raw []byte) (lgTree, error) {
 	return t, nil
 }
 
+// validateCatBitsets checks every packed large-bitset run (catType 0) against
+// catThresholds once at load time so categoricalDecision can index the run
+// guard-free in the prediction hot path.
 func (t *lgTree) validateCatBitsets() error {
-	if len(t.catBoundaries) > 0 {
-		prev := uint32(0)
-		for i, boundary := range t.catBoundaries {
-			if i == 0 && boundary != 0 {
-				return fmt.Errorf("cat_boundaries[0] = %d, want 0", boundary)
-			}
-			if boundary < prev {
-				return fmt.Errorf("cat_boundaries[%d] = %d before previous boundary %d", i, boundary, prev)
-			}
-			if uint64(boundary) > uint64(len(t.catThresholds)) {
-				return fmt.Errorf("cat_boundaries[%d] = %d exceeds cat_threshold length %d", i, boundary, len(t.catThresholds))
-			}
-			prev = boundary
-		}
-	}
-
 	for i := range t.nodes {
 		node := &t.nodes[i]
 		if node.Flags&categorical == 0 || node.Flags&(catOneHot|catSmall|catMedium) != 0 {
 			continue
 		}
-		catIdx := uint32(node.Threshold)
-		if float64(catIdx) != node.Threshold {
-			return fmt.Errorf("node %d has non-integer categorical threshold %v", i, node.Threshold)
+		bits := math.Float64bits(node.Threshold)
+		idxS := uint32(bits)
+		span := uint32(bits >> 32)
+		if span == 0 {
+			return fmt.Errorf("node %d has empty categorical bitset run", i)
 		}
-		if uint64(catIdx)+1 >= uint64(len(t.catBoundaries)) {
-			return fmt.Errorf("node %d references cat boundary %d with only %d boundaries", i, catIdx, len(t.catBoundaries))
+		if uint64(idxS)+uint64(span) > uint64(len(t.catThresholds)) {
+			return fmt.Errorf("node %d references bitset words [%d, %d) with only %d cat_threshold words", i, idxS, uint64(idxS)+uint64(span), len(t.catThresholds))
 		}
 	}
 
