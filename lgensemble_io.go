@@ -2,6 +2,7 @@ package leaves
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -400,6 +401,9 @@ func LGEnsembleFromReader(reader *bufio.Reader, loadTransformation bool) (*Ensem
 		}
 		e.Trees = append(e.Trees, tree)
 	}
+	if err := e.compactCatThresholds(); err != nil {
+		return nil, err
+	}
 	return &Ensemble{e, transform}, nil
 }
 
@@ -662,6 +666,67 @@ func (t *lgTree) validateCatBitsets() error {
 	return nil
 }
 
+// compactCatThresholds merges every tree's large categorical bitset runs
+// (catType 0) into a single shared, deduplicated catThresholds slice and
+// repoints all trees at it. GBDT models reuse the same categorical groupings
+// across many trees and nodes, so identical bitset runs are common; storing
+// each distinct run once shrinks the memory walked by categoricalDecision's hot
+// catThresholds load and improves CPU cache residency. This only relocates
+// bitset words: every node still reads the exact same bits via the same
+// packCatRun(idxS, span) encoding, so predictions are unchanged.
+func (e *lgEnsemble) compactCatThresholds() error {
+	total := 0
+	for ti := range e.Trees {
+		total += len(e.Trees[ti].catThresholds)
+	}
+	shared := make([]uint32, 0, total)
+	offsets := make(map[string]uint32)
+	// Loop 1 reads each tree's original local catThresholds and rewrites node
+	// offsets; loop 2 repoints trees at shared only after all reads finish.
+	for ti := range e.Trees {
+		t := &e.Trees[ti]
+		local := t.catThresholds
+		if len(local) == 0 {
+			continue
+		}
+		for ni := range t.nodes {
+			node := &t.nodes[ni]
+			if node.Flags&categorical == 0 || node.Flags&(catOneHot|catSmall|catMedium) != 0 {
+				continue
+			}
+			bits := math.Float64bits(node.Threshold)
+			idxS := uint32(bits)
+			span := uint32(bits >> 32)
+			run := local[idxS : idxS+span]
+			// Key identical runs (same words, same length) so they collapse to
+			// one shared copy.
+			keyBytes := make([]byte, len(run)*4)
+			for i, w := range run {
+				binary.LittleEndian.PutUint32(keyBytes[i*4:], w)
+			}
+			key := string(keyBytes)
+			off, ok := offsets[key]
+			if !ok {
+				off = uint32(len(shared))
+				shared = append(shared, run...)
+				offsets[key] = off
+			}
+			node.Threshold = packCatRun(off, span)
+		}
+	}
+	for ti := range e.Trees {
+		t := &e.Trees[ti]
+		if len(t.catThresholds) == 0 {
+			continue
+		}
+		t.catThresholds = shared
+		if err := t.validateCatBitsets(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LGEnsembleFromJSON reads LightGBM model from stream with JSON data
 func LGEnsembleFromJSON(reader io.Reader, loadTransformation bool) (*Ensemble, error) {
 	data := &lgEnsembleJSON{}
@@ -715,6 +780,9 @@ func LGEnsembleFromJSON(reader io.Reader, loadTransformation bool) (*Ensemble, e
 			return nil, fmt.Errorf("error while reading %d tree: %s", i, err.Error())
 		}
 		e.Trees = append(e.Trees, tree)
+	}
+	if err := e.compactCatThresholds(); err != nil {
+		return nil, err
 	}
 	return &Ensemble{e, &transformation.TransformRaw{NumOutputGroups: e.nRawOutputGroups}}, nil
 }

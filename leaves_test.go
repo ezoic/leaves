@@ -107,6 +107,69 @@ func TestLGTreeCategoricalDecisionPackedRun(t *testing.T) {
 	}
 }
 
+func TestCompactCatThresholds(t *testing.T) {
+	runA := []uint32{1 << 3, 1 << 5, 1 << 7}
+	runB := []uint32{1 << 2, 1 << 4, 1 << 6}
+	mkTree := func(runs ...[]uint32) lgTree {
+		tr := lgTree{}
+		for _, r := range runs {
+			idxS := uint32(len(tr.catThresholds))
+			tr.catThresholds = append(tr.catThresholds, r...)
+			tr.nodes = append(tr.nodes, categoricalNode(0, 0, packCatRun(idxS, uint32(len(r))), 0))
+		}
+		return tr
+	}
+	e := &lgEnsemble{
+		Trees: []lgTree{
+			mkTree(runA, runB),
+			mkTree(runA), // identical run to tree 0's first node
+		},
+		nRawOutputGroups: 1,
+	}
+
+	// Snapshot every node's decision over a range of categories using the
+	// per-tree catThresholds before compaction.
+	type key struct {
+		ti, ni int
+		fval   float64
+	}
+	before := map[key]bool{}
+	for ti := range e.Trees {
+		tr := &e.Trees[ti]
+		for ni := range tr.nodes {
+			for fv := 0; fv < 96; fv++ {
+				before[key{ti, ni, float64(fv)}] = tr.categoricalDecision(&tr.nodes[ni], float64(fv), tr.catThresholds)
+			}
+		}
+	}
+
+	if err := e.compactCatThresholds(); err != nil {
+		t.Fatalf("compactCatThresholds: %s", err)
+	}
+
+	// runA appears twice but must be stored once: shared holds runA + runB = 6.
+	if got := len(e.Trees[0].catThresholds); got != 6 {
+		t.Fatalf("shared catThresholds length = %d, want 6 (runA deduped)", got)
+	}
+	// Every tree with categorical data must share one backing array.
+	if &e.Trees[0].catThresholds[0] != &e.Trees[1].catThresholds[0] {
+		t.Fatal("trees do not share the same catThresholds backing array")
+	}
+
+	// Decisions must be byte-for-byte identical after relocation.
+	for ti := range e.Trees {
+		tr := &e.Trees[ti]
+		for ni := range tr.nodes {
+			for fv := 0; fv < 96; fv++ {
+				got := tr.categoricalDecision(&tr.nodes[ni], float64(fv), tr.catThresholds)
+				if want := before[key{ti, ni, float64(fv)}]; got != want {
+					t.Fatalf("decision changed: tree %d node %d cat %d: got %v want %v", ti, ni, fv, got, want)
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkLGTreeCategoricalDecisionSingleWord(b *testing.B) {
 	tree := &lgTree{
 		catThresholds: []uint32{1<<3 | 1<<17},
