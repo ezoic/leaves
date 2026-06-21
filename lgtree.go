@@ -77,19 +77,13 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32) bo
 	if ifval == 0 && node.Flags&missingNan > 0 && math.IsNaN(fval) {
 		return false
 	}
-	if node.Flags&catOneHot > 0 {
-		return int32(node.Threshold) == ifval
-	} else if node.Flags&catMedium > 0 {
-		if ifval >= 64 {
-			return false
-		}
-		// Safe: Float64bits/Float64frombits are Go-spec-guaranteed bitwise
-		// identity operations. The packed uint64 is never passed through FP
-		// arithmetic, so NaN bit patterns are preserved unchanged.
-		bits := math.Float64bits(node.Threshold)
-		return (bits>>uint(ifval))&1 != 0
-	} else if node.Flags&catSmall > 0 {
-		return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
+	// The specialized one-hot/medium/small encodings are rarer than the default
+	// large-bitset run. Collapsing their three sequential flag tests into a
+	// single combined mask check shortens the common large-bitset path, which
+	// dominates CPU profiles of predict's hot loop, and isolates the cold
+	// encodings in an out-of-line helper.
+	if node.Flags&(catOneHot|catMedium|catSmall) != 0 {
+		return t.categoricalDecisionSpecial(node, ifval)
 	}
 	// Large bitset (catType 0): Threshold packs the [idxS, idxS+span) word run
 	// in catThresholds via packCatRun, so a category test needs one th load.
@@ -105,6 +99,33 @@ func (t *lgTree) categoricalDecision(node *lgNode, fval float64, th []uint32) bo
 	// time, which guarantees idxS+span <= len(th) for every catType 0 node;
 	// combined with word < span (checked above) this gives idxS+word < len(th).
 	return (th[uint32(bits)+word]>>(pos&31))&1 != 0
+}
+
+// categoricalDecisionSpecial handles the rarer one-hot, medium (inline 64-bit
+// bitset), and small bitset categorical encodings. ifval is the already
+// non-negative int32 category resolved by categoricalDecision. The caller must
+// guarantee exactly one of catOneHot/catMedium/catSmall is set: the trailing
+// return assumes catSmall once catOneHot and catMedium are ruled out. It is
+// kept out of line so categoricalDecision's common large-bitset path stays
+// lean; go:noinline prevents the inliner from folding this cold code back into
+// the caller and re-inflating the hot path.
+//
+//go:noinline
+func (t *lgTree) categoricalDecisionSpecial(node *lgNode, ifval int32) bool {
+	if node.Flags&catOneHot > 0 {
+		return int32(node.Threshold) == ifval
+	} else if node.Flags&catMedium > 0 {
+		if ifval >= 64 {
+			return false
+		}
+		// Safe: Float64bits/Float64frombits are Go-spec-guaranteed bitwise
+		// identity operations. The packed uint64 is never passed through FP
+		// arithmetic, so NaN bit patterns are preserved unchanged.
+		bits := math.Float64bits(node.Threshold)
+		return (bits>>uint(ifval))&1 != 0
+	}
+	// catSmall
+	return util.FindInBitsetUint32(uint32(node.Threshold), uint32(ifval))
 }
 
 func (t *lgTree) predict(fvals []float64) (float64, uint32) {
